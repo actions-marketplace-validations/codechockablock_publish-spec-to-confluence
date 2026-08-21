@@ -1,8 +1,9 @@
 name: Publish API spec to Confluence
+# Marketplace caps this at 125 characters, so the "publish-time, not
+# fetch-at-view" point lives in the README rather than here.
 description: >-
-  Upload an OpenAPI/Swagger (or any spec) file to a Confluence page as an
-  attachment, so an OpenAPI Reference macro on that page renders the current
-  version. Publish-time only: nothing is fetched when the page is viewed.
+  Upload an OpenAPI/Swagger spec to a Confluence page from CI, so the OpenAPI
+  Reference macro renders the current version.
 author: Chockablock
 
 branding:
