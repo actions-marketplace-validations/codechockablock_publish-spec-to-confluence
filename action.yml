@@ -1,0 +1,73 @@
+name: Publish API spec to Confluence
+description: >-
+  Upload an OpenAPI/Swagger (or any spec) file to a Confluence page as an
+  attachment, so an OpenAPI Reference macro on that page renders the current
+  version. Publish-time only: nothing is fetched when the page is viewed.
+author: Chockablock
+
+branding:
+  icon: upload-cloud
+  color: gray-dark
+
+inputs:
+  base-url:
+    description: 'Your Atlassian site, e.g. https://acme.atlassian.net (no trailing slash).'
+    required: true
+  email:
+    description: 'Atlassian account email the API token belongs to.'
+    required: true
+  api-token:
+    description: >-
+      Atlassian API token. Store it in Actions secrets, never inline. The token
+      needs only permission to add attachments to the target page.
+    required: true
+  page-id:
+    description: >-
+      Numeric id of the Confluence page holding the macro. Find it in the page
+      URL: /wiki/spaces/SPACE/pages/<page-id>/Title
+    required: true
+  file:
+    description: 'Path to the spec file in your repository, e.g. docs/openapi.yaml'
+    required: true
+  attachment-name:
+    description: >-
+      Filename to store on the page. Defaults to the basename of `file`.
+      KEEP THIS STABLE — re-uploading the same name updates the existing
+      attachment in place, which is what keeps the macro pointing at it.
+    required: false
+    default: ''
+  comment:
+    description: 'Version comment recorded on the attachment.'
+    required: false
+    default: 'Published from GitHub Actions'
+  fail-on-missing-file:
+    description: 'Fail the job if `file` does not exist. Set false to skip quietly.'
+    required: false
+    default: 'true'
+
+outputs:
+  attachment-id:
+    description: 'The Confluence attachment id, stable across republishes.'
+    value: ${{ steps.publish.outputs.attachment-id }}
+  version:
+    description: 'The attachment version number after this publish.'
+    value: ${{ steps.publish.outputs.version }}
+  changed:
+    description: 'true if bytes were uploaded, false if the file was byte-identical.'
+    value: ${{ steps.publish.outputs.changed }}
+
+runs:
+  using: composite
+  steps:
+    - id: publish
+      shell: bash
+      run: python3 ${{ github.action_path }}/publish.py
+      env:
+        OA_BASE_URL: ${{ inputs.base-url }}
+        OA_EMAIL: ${{ inputs.email }}
+        OA_API_TOKEN: ${{ inputs.api-token }}
+        OA_PAGE_ID: ${{ inputs.page-id }}
+        OA_FILE: ${{ inputs.file }}
+        OA_ATTACHMENT_NAME: ${{ inputs.attachment-name }}
+        OA_COMMENT: ${{ inputs.comment }}
+        OA_FAIL_ON_MISSING: ${{ inputs.fail-on-missing-file }}
