@@ -37,6 +37,16 @@ inputs:
       attachment in place, which is what keeps the macro pointing at it.
     required: false
     default: ''
+  mark-page:
+    description: >-
+      Record a small content property on the page saying it holds a published
+      spec. The Confluence app reads it to decide where to show its "API spec"
+      label, so the label appears on pages you publish to and nowhere else.
+      Written with YOUR credentials — the app itself asks for no write
+      permission. Set to 'false' to publish without it; the spec renders either
+      way, only the label is affected.
+    required: false
+    default: 'true'
   comment:
     description: 'Version comment recorded on the attachment.'
     required: false
@@ -72,3 +82,4 @@ runs:
         OA_ATTACHMENT_NAME: ${{ inputs.attachment-name }}
         OA_COMMENT: ${{ inputs.comment }}
         OA_FAIL_ON_MISSING: ${{ inputs.fail-on-missing-file }}
+        OA_MARK_PAGE: ${{ inputs.mark-page }}

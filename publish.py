@@ -91,6 +91,57 @@ def explain(status, detail, what):
     fail(f"{what} failed with HTTP {status}: {detail}")
 
 
+# The content property this action writes on a page it has published to.
+#
+# A PERMANENT CONTRACT, like a macro's module key. The Confluence app reads it
+# through a `displayConditions.entityPropertyExists` on its byline module, so
+# the label that says "this page holds an API spec" appears on pages this
+# action has published to and nowhere else. Rename it and every page already
+# marked is orphaned: the marker stays, nothing reads it, and the label stops
+# appearing on pages that genuinely have a spec.
+#
+# The alternative was for the app to write this itself, which needs
+# `write:content.property:confluence`. That was declined deliberately: the app
+# ships with a single read-only scope and that sentence is load-bearing in its
+# listing and its security review. Writing the marker from CI, with the
+# customer's own credentials and no new app permission, keeps it true.
+SPEC_MARKER_KEY = "oarender-spec"
+
+
+def mark_page(base, page_id, header, enabled):
+    """
+    Record that this page holds a published spec.
+
+    NEVER FATAL. The attachment is the job; this is a marker that makes a label
+    render. A site that refuses the write — a permission this token happens not
+    to have, a property API that moved — must not fail somebody's pipeline over
+    a cosmetic nicety, so every failure here is a warning and the run continues.
+
+    Create-if-absent, deliberately. The value carries no filename, version or
+    date: anything specific here could go stale the moment the next publish
+    changes it, and a stale marker is the failure this whole approach exists to
+    avoid. Its EXISTENCE is the entire signal.
+    """
+    if not enabled:
+        return "skipped"
+    status, body = request(
+        "POST",
+        f"{base}/wiki/api/v2/pages/{page_id}/properties",
+        header,
+        body=json.dumps({"key": SPEC_MARKER_KEY,
+                         "value": {"managedBy": "publish-spec-to-confluence"}}).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    if status in (200, 201):
+        return "created"
+    # 409/400 mean it is already there, which is exactly the state we wanted.
+    if status in (400, 409):
+        return "present"
+    print(f"::warning::Could not mark page {page_id} as holding a spec (HTTP {status}). "
+          f"The spec published fine; the app's page label may not appear.")
+    return "failed"
+
+
 def multipart(filename, data, comment):
     """Build a multipart/form-data body without pulling in a dependency."""
     boundary = "----oaPublish" + hashlib.sha256(filename.encode()).hexdigest()[:24]
@@ -121,6 +172,7 @@ def main():
     file_path = require("OA_FILE")
     comment = os.environ.get("OA_COMMENT") or "Published from GitHub Actions"
     fail_on_missing = (os.environ.get("OA_FAIL_ON_MISSING") or "true").lower() != "false"
+    mark = (os.environ.get("OA_MARK_PAGE") or "true").lower() != "false"
 
     if not page_id.isdigit():
         fail(f"page-id must be numeric, got {page_id!r}",
@@ -163,6 +215,12 @@ def main():
             code, current = request("GET", f"{base}/wiki{dl}", header, raw=True)
             if code == 200 and isinstance(current, bytes) and current == data:
                 print(f"::notice::{name} is already current on page {page_id}; nothing uploaded.")
+                # Marked even though nothing uploaded. A page published before
+                # this action learned to mark pages is byte-identical forever
+                # after, so gating the marker on `changed` would mean those
+                # pages never got one and the app's label never appeared on
+                # them — the exact users who have been publishing longest.
+                mark_page(base, page_id, header, mark)
                 set_output("attachment-id", att_id)
                 set_output("version", str((existing.get("version") or {}).get("number", "")))
                 set_output("changed", "false")
@@ -189,6 +247,8 @@ def main():
             explain(status, body, "Creating the attachment")
         result = (body.get("results") or [{}])[0] if isinstance(body, dict) else {}
         action = "Created"
+
+    mark_page(base, page_id, header, mark)
 
     att_id = result.get("id", "")
     version = str(((result.get("version") or {}).get("number", "")))

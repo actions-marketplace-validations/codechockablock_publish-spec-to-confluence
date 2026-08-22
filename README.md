@@ -81,6 +81,36 @@ by leaving `attachment-name` alone.
 | `attachment-name` | no | defaults to the file's basename; keep it stable |
 | `comment` | no | version comment on the attachment |
 | `fail-on-missing-file` | no | `false` to skip quietly when the file is absent |
+| `mark-page` | no | `false` to skip the page marker — see below |
+
+## The page marker
+
+After a successful publish this action records a small content property on the
+page, `oarender-spec`, saying the page holds a published spec. The Confluence
+app reads it to decide where to show its **API spec** label — the line under
+the page title naming the API, its version and when it was published.
+
+It exists because of a constraint worth knowing about. Confluence gives an app
+no way to hide that label on pages it has nothing to say about, so without a
+marker the label would appear on **every page in your site** — every meeting
+note, every retro — announcing an API spec that is not there. The marker
+inverts it: the label appears where a spec was published and nowhere else.
+
+**The app itself never writes anything.** It ships with a single read-only
+scope, `read:attachment:confluence`, and that is the sentence its security
+review rests on. The alternative was for the app to request
+`write:content.property:confluence` so it could mark pages itself, which was
+declined. This action already authenticates as you and already writes to the
+page, so the marker costs no new app permission at all.
+
+The property is `{"managedBy": "publish-spec-to-confluence"}` and carries no
+filename, version or date — anything specific would be stale the moment the
+next publish changed it. Its existence is the entire signal.
+
+Set `mark-page: false` to publish without it. Your spec renders exactly the
+same either way; only the label is affected. If the write is refused — a token
+without permission, say — you get a warning and the publish still succeeds. The
+spec is the job; the marker is not worth failing a pipeline over.
 
 ## Outputs
 

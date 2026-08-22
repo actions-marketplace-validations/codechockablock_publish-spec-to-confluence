@@ -27,6 +27,11 @@ STUB = textwrap.dedent('''
         code = STATE.get("force_code")
         if code:
             raise urllib.error.HTTPError(url, code, "no", {}, io.BytesIO(b"denied"))
+        if "/properties" in url:
+            pcode = STATE.get("property_code")
+            if pcode:
+                raise urllib.error.HTTPError(url, pcode, "no", {}, io.BytesIO(b"nope"))
+            return R(json.dumps({"key": "oarender-spec", "id": "prop1"}).encode())
         if method == "GET" and "child/attachment" in url and "/data" not in url:
             return R(json.dumps({"results": STATE["existing"]}).encode())
         if method == "GET":
@@ -44,7 +49,8 @@ STUB = textwrap.dedent('''
 ''')
 
 
-def run(existing, current_bytes="", file_bytes="spec: v1", force_code=None, page_id="12345"):
+def run(existing, current_bytes="", file_bytes="spec: v1", force_code=None, page_id="12345",
+        mark_page="true", property_code=None):
     with tempfile.TemporaryDirectory() as tmp:
         spec = os.path.join(tmp, "openapi.yaml")
         with open(spec, "w") as fh:
@@ -57,11 +63,11 @@ def run(existing, current_bytes="", file_bytes="spec: v1", force_code=None, page
         env = dict(os.environ,
             PYTHONPATH=HERE,
             STUB=json.dumps({"existing": existing, "current_bytes": current_bytes,
-                             "force_code": force_code}),
+                             "force_code": force_code, "property_code": property_code}),
             OA_BASE_URL="https://acme.atlassian.net", OA_EMAIL="a@b.c",
             OA_API_TOKEN="secret-token-value", OA_PAGE_ID=page_id,
             OA_FILE=spec, OA_ATTACHMENT_NAME="", OA_COMMENT="ci",
-            OA_FAIL_ON_MISSING="true", GITHUB_OUTPUT=out)
+            OA_FAIL_ON_MISSING="true", OA_MARK_PAGE=mark_page, GITHUB_OUTPUT=out)
         p = subprocess.run([sys.executable, driver], capture_output=True, text=True, env=env)
         with open(out) as fh:
             outputs = dict(l.split("=", 1) for l in fh.read().splitlines() if "=" in l)
@@ -110,3 +116,72 @@ class T(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class Marker(unittest.TestCase):
+    """
+    The content property that tells the Confluence app where its page label
+    belongs.
+
+    The app reads this through a display condition, so its ABSENCE is what
+    keeps the label off the thousands of pages in a site that have no spec.
+    That makes writing it a contract, not a detail: the label is accurate
+    because this runs, and inaccurate the moment it silently stops.
+
+    It is also the reason the app still asks for exactly one read-only scope.
+    Writing the marker from CI uses the customer's own credentials; the
+    alternative was `write:content.property:confluence` on the app itself.
+    """
+
+    def test_marks_the_page_after_creating_an_attachment(self):
+        p, out = run([])
+        self.assertIn("/api/v2/pages/12345/properties", p.stderr, p.stderr)
+        self.assertEqual(out.get("changed"), "true")
+
+    def test_marks_the_page_after_updating_an_attachment(self):
+        p, _ = run([{"id": "att777", "version": {"number": 4},
+                     "_links": {"download": "/download/old"}}], current_bytes="spec: v0")
+        self.assertIn("/api/v2/pages/12345/properties", p.stderr, p.stderr)
+
+    def test_marks_the_page_even_when_nothing_was_uploaded(self):
+        """
+        The case that would otherwise strand the longest-standing users. A page
+        published before this action learned to mark pages stays byte-identical
+        forever, so gating the marker on `changed` would mean it never got one.
+        """
+        p, out = run([{"id": "att777", "version": {"number": 4},
+                       "_links": {"download": "/download/old"}}], current_bytes="spec: v1")
+        self.assertEqual(out.get("changed"), "false")
+        self.assertIn("/api/v2/pages/12345/properties", p.stderr, p.stderr)
+
+    def test_mark_page_false_writes_nothing(self):
+        p, out = run([], mark_page="false")
+        self.assertNotIn("/properties", p.stderr, p.stderr)
+        self.assertEqual(out.get("changed"), "true")
+
+    def test_a_refused_marker_warns_but_does_not_fail_the_publish(self):
+        """
+        The attachment is the job. A site that will not take the property must
+        not break somebody's pipeline over a label.
+        """
+        p, out = run([], property_code=403)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(out.get("changed"), "true")
+        self.assertIn("::warning::", p.stdout + p.stderr)
+
+    def test_an_existing_marker_is_not_an_error(self):
+        """409 means the marker is already there, which is the desired state."""
+        p, out = run([], property_code=409)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertNotIn("::warning::", p.stdout)
+        self.assertEqual(out.get("changed"), "true")
+
+    def test_the_marker_carries_nothing_that_can_go_stale(self):
+        """
+        Its existence is the whole signal. A filename or version in the value
+        would be wrong the moment the next publish changed it, and a stale
+        marker is precisely the failure this approach exists to avoid.
+        """
+        import publish
+        self.assertEqual(publish.SPEC_MARKER_KEY, "oarender-spec")
+
